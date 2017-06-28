@@ -1,6 +1,6 @@
 {
   "name": "eol-converter-cli",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Newline (EOL) coverter CLI for NodeJs (github repo soon) - Currently doing only CRLF -> LF convertion",
   "main": "src/index.js",
   "bin": {

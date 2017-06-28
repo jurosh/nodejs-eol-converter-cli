@@ -29,12 +29,15 @@ Run conversions (cannot be undone):
 
 ```
 eolConverter "**/*.js"
+eolConverter "**/*.{js,jsx,ts,tsx}"
+eolConverter "src/**/*.js"
+eolConverter "{src,tests}/**/*.js"
 ```
 
 **To CRLF (Windows default)**
 
 ```
-eolConverter crlf "**/*.{js,jsx,ts,tsx}"
+eolConverter crlf "**/*.js"
 ```
 
 ## Tips

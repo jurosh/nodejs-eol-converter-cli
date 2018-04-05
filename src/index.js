@@ -20,7 +20,11 @@ console.log(isWarmup
   : 'Converting to ' + (isCrlf ? 'CRLF' : 'LF'))
 console.log('---')
 
-glob(inputFilesGlob, null, function (er, files) {
+glob(inputFilesGlob, { nodir: true }, function (error, files) {
+  if (error) {
+    console.error(error)
+    return
+  }
   if (!files || files.length === 0) {
     return console.error('ERROR: no files found')
   }

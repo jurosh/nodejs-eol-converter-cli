@@ -8,7 +8,8 @@
   },
   "scripts": {
     "start": "node src/index.js",
-    "build": "echo \"Hello World!\""
+    "build": "echo \"Hello World!\"",
+    "test": "echo \"Tests!\"; exit 0;"
   },
   "keywords": [
     "eol",

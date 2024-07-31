@@ -1,6 +1,6 @@
 {
   "name": "eol-converter-cli",
-  "version": "1.0.8",
+  "version": "1.1.0",
   "description": "Newline converter CLI for simple CRLF -> LF (and reverse) convertions of multiple files.",
   "main": "src/index.js",
   "bin": {

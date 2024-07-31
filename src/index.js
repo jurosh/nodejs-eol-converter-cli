@@ -21,7 +21,9 @@ async function run() {
     : 'Converting to ' + (isCrlf ? 'CRLF' : 'LF'))
   console.log('---')
 
-  const files = await glob(inputFilesGlob, { nodir: true })
+  const files = path.isAbsolute(inputFilesGlob)
+    ? [path.basename(inputFilesGlob)]
+    : await glob(inputFilesGlob, { nodir: true });
   if (!files || files.length === 0) {
     return console.error('ERROR: no files found')
   }
@@ -29,6 +31,9 @@ async function run() {
     console.log(fileName)
     if (isWarmup) {
       return;
+    }
+    if (!fs.existsSync(fileName)) {
+      return console.error('ERROR: file ' + fileName + ' not found')
     }
     try {
       const fileContent = fs.readFileSync(path.join(dir, fileName)).toString()

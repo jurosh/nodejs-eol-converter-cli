@@ -7,10 +7,10 @@ const os = require('node:os')
 const path = require('node:path')
 const { spawnSync } = require('node:child_process')
 
-const { parseArgs, isUtf8Text, writeAtomic, run } = require('../src/index.js')
+const { parseArgs, isUtf8Text, writeInPlace, run } = require('../src/index.js')
 
 const BIN = path.resolve(__dirname, '../src/index.js')
-const USAGE = 'Usage: eolConverter <lf|crlf|warmup> <glob>'
+const USAGE = 'Usage: eolConverter [warmup] [lf|crlf] <glob>'
 const MAX_BYTES = 256 * 1024 * 1024
 const IS_WINDOWS = process.platform === 'win32'
 const IS_ROOT = !IS_WINDOWS && process.getuid() === 0
@@ -57,21 +57,38 @@ function runCli(args, cwd) {
 }
 
 test('parseArgs', async (t) => {
-  await t.test('accepts each supported mode with a pattern', () => {
-    for (const mode of ['lf', 'crlf', 'warmup']) {
-      assert.deepEqual(parseArgs([mode, '**/*.js']), { mode, pattern: '**/*.js' })
+  await t.test('accepts each target with a pattern', () => {
+    for (const target of ['lf', 'crlf']) {
+      assert.deepEqual(parseArgs([target, '**/*.js']), { target, dryRun: false, pattern: '**/*.js' })
     }
   })
 
+  await t.test('defaults to LF when only a pattern is given', () => {
+    assert.deepEqual(parseArgs(['**/*.js']), { target: 'lf', dryRun: false, pattern: '**/*.js' })
+  })
+
+  await t.test('accepts warmup with an optional target', () => {
+    assert.deepEqual(parseArgs(['warmup', '*.js']), { target: 'lf', dryRun: true, pattern: '*.js' })
+    assert.deepEqual(parseArgs(['warmup', 'lf', '*.js']), { target: 'lf', dryRun: true, pattern: '*.js' })
+    assert.deepEqual(parseArgs(['warmup', 'crlf', '*.js']), { target: 'crlf', dryRun: true, pattern: '*.js' })
+  })
+
   await t.test('rejects wrong argument count', () => {
-    for (const args of [[], ['lf'], ['lf', 'a', 'b']]) {
+    for (const args of [[], ['warmup'], ['lf', 'a', 'b'], ['warmup', 'lf', 'a', 'b']]) {
       assert.throws(() => parseArgs(args), { message: USAGE })
     }
   })
 
-  await t.test('rejects unknown mode', () => {
+  await t.test('rejects a keyword in place of the pattern', () => {
+    for (const args of [['lf'], ['crlf'], ['warmup', 'crlf'], ['lf', 'warmup'], ['crlf', 'warmup', '*.js']]) {
+      assert.throws(() => parseArgs(args), { message: USAGE })
+    }
+  })
+
+  await t.test('rejects unknown target', () => {
     assert.throws(() => parseArgs(['cr', '*.js']), { message: USAGE })
     assert.throws(() => parseArgs(['LF', '*.js']), { message: USAGE })
+    assert.throws(() => parseArgs(['warmup', 'cr', '*.js']), { message: USAGE })
   })
 
   await t.test('rejects empty pattern', () => {
@@ -101,36 +118,40 @@ test('isUtf8Text', async (t) => {
   })
 })
 
-test('writeAtomic', async (t) => {
-  await t.test('writes content, keeps the given mode despite the umask and leaves no temp file', NO_POSIX_MODES, () => {
+test('writeInPlace', async (t) => {
+  await t.test('grows and shrinks the file to the new content and creates no other file', () => {
     const dir = tmpDir(t)
-    const file = path.join(dir, 'out.txt')
-    writeAtomic(file, Buffer.from('data\n'), 0o664)
-    assert.equal(read(file), 'data\n')
-    assert.equal(fs.statSync(file).mode & 0o777, 0o664)
+    const file = write(dir, 'out.txt', 'abc')
+    writeInPlace(file, Buffer.from('longer content'))
+    assert.equal(read(file), 'longer content')
+    writeInPlace(file, Buffer.from('xy'))
+    assert.equal(read(file), 'xy')
     assert.deepEqual(fs.readdirSync(dir), ['out.txt'])
   })
 
-  await t.test('replaces an existing file', () => {
+  await t.test('keeps the inode and mode', NO_POSIX_MODES, () => {
     const dir = tmpDir(t)
-    const file = write(dir, 'out.txt', 'old')
-    writeAtomic(file, Buffer.from('new'), 0o644)
-    assert.equal(read(file), 'new')
-    assert.deepEqual(fs.readdirSync(dir), ['out.txt'])
+    const file = write(dir, 'out.txt', 'old', 0o640)
+    fs.chmodSync(file, 0o640)
+    const before = fs.statSync(file)
+    writeInPlace(file, Buffer.from('new'))
+    const after = fs.statSync(file)
+    assert.equal(after.ino, before.ino)
+    assert.equal(after.mode & 0o777, 0o640)
   })
 
-  await t.test('removes the temp file when the rename fails', () => {
+  await t.test('refuses a read-only file and leaves it untouched', { skip: IS_ROOT || IS_WINDOWS }, () => {
     const dir = tmpDir(t)
-    const target = path.join(dir, 'sub')
-    fs.mkdirSync(target)
-    assert.throws(() => writeAtomic(target, Buffer.from('x'), 0o644))
-    assert.deepEqual(fs.readdirSync(dir), ['sub'])
+    const file = write(dir, 'ro.txt', 'old', 0o444)
+    assert.throws(() => writeInPlace(file, Buffer.from('new')), { code: 'EACCES' })
+    assert.equal(read(file), 'old')
   })
 
-  await t.test('rethrows when the temp file cannot be created', () => {
+  await t.test('rethrows when the file does not exist', () => {
     const dir = tmpDir(t)
-    const file = path.join(dir, 'missing', 'out.txt')
-    assert.throws(() => writeAtomic(file, Buffer.from('x'), 0o644), { code: 'ENOENT' })
+    const file = path.join(dir, 'missing.txt')
+    assert.throws(() => writeInPlace(file, Buffer.from('x')), { code: 'ENOENT' })
+    assert.deepEqual(fs.readdirSync(dir), [])
   })
 })
 
@@ -147,6 +168,15 @@ test('run', async (t) => {
     assert.deepEqual(c.out.slice(0, 3), [`cwd: ${dir}`, 'pattern: *.txt', 'mode: convert to LF'])
     assert.deepEqual(c.out.slice(3), [`CHANGED: ${a}`, `CHANGED: ${b}`, 'changed=2 unchanged=0 skipped=0 failed=0'])
     assert.deepEqual(c.err, [])
+  })
+
+  await t.test('defaults to LF when only a pattern is given', async (t) => {
+    const dir = tmpDir(t)
+    const f = write(dir, 'f.txt', 'a\r\nb\r\n')
+    const c = captureConsole(t)
+    await runIn(t, ['f.txt'], dir)
+    assert.equal(read(f), 'a\nb\n')
+    assert.ok(c.out.includes('mode: convert to LF'))
   })
 
   await t.test('crlf normalizes LF, lone CR and CRLF to CRLF', async (t) => {
@@ -195,9 +225,43 @@ test('run', async (t) => {
     const c = captureConsole(t)
     await runIn(t, ['warmup', 'w.txt'], dir)
     assert.equal(read(f), 'a\r\nb\r\n')
-    assert.ok(c.out.includes('mode: warmup (dry run, nothing written)'))
+    assert.ok(c.out.includes('mode: warmup (dry run for LF, nothing written)'))
     assert.ok(c.out.includes(`WOULD CHANGE: ${f}`))
     assert.ok(c.out.includes('changed=1 unchanged=0 skipped=0 failed=0'))
+  })
+
+  await t.test('warmup crlf previews a CRLF conversion without writing', async (t) => {
+    const dir = tmpDir(t)
+    const f = write(dir, 'w.txt', 'a\nb\n')
+    const c = captureConsole(t)
+    await runIn(t, ['warmup', 'crlf', 'w.txt'], dir)
+    assert.equal(read(f), 'a\nb\n')
+    assert.ok(c.out.includes('mode: warmup (dry run for CRLF, nothing written)'))
+    assert.ok(c.out.includes(`WOULD CHANGE: ${f}`))
+    assert.ok(c.out.includes('changed=1 unchanged=0 skipped=0 failed=0'))
+  })
+
+  await t.test('updates every hard link of a converted file', async (t) => {
+    const dir = tmpDir(t)
+    const a = write(dir, 'a.txt', 'x\r\n')
+    const b = path.join(dir, 'b.other')
+    fs.linkSync(a, b)
+    captureConsole(t)
+    await runIn(t, ['lf', 'a.txt'], dir)
+    assert.equal(read(a), 'x\n')
+    assert.equal(read(b), 'x\n')
+    assert.equal(fs.statSync(a).ino, fs.statSync(b).ino)
+  })
+
+  await t.test('reports a read-only file as failed and leaves it untouched', { skip: IS_ROOT || IS_WINDOWS }, async (t) => {
+    const dir = tmpDir(t)
+    const f = write(dir, 'ro.txt', 'a\r\n', 0o444)
+    const c = captureConsole(t)
+    const code = await runIn(t, ['lf', 'ro.txt'], dir)
+    assert.equal(code, 1)
+    assert.equal(read(f), 'a\r\n')
+    assert.ok(c.err[0].startsWith(`FAIL: ${f}: EACCES`))
+    assert.ok(c.out.includes('changed=0 unchanged=0 skipped=0 failed=1'))
   })
 
   await t.test('skips files that are not UTF-8 text', async (t) => {
@@ -308,6 +372,14 @@ test('cli', async (t) => {
     assert.equal(r.stderr, '')
     assert.equal(read(f), 'a\n')
     assert.ok(r.stdout.includes(`CHANGED: ${f}`))
+  })
+
+  await t.test('exits 0 and converts to LF without a target argument', (t) => {
+    const dir = tmpDir(t)
+    const f = write(dir, 'f.txt', 'a\r\n')
+    const r = runCli(['f.txt'], dir)
+    assert.equal(r.status, 0)
+    assert.equal(read(f), 'a\n')
   })
 
   await t.test('exits 1 when a file cannot be read', { skip: IS_ROOT || IS_WINDOWS }, (t) => {

@@ -3,11 +3,15 @@
   "version": "1.1.0",
   "description": "Newline converter CLI for simple CRLF -> LF (and reverse) convertions of multiple files.",
   "main": "src/index.js",
+  "files": [
+    "src"
+  ],
   "bin": {
     "eolConverter": "./src/index.js"
   },
   "scripts": {
-    "start": "node src/index.js"
+    "start": "node src/index.js",
+    "test": "node --test --experimental-test-coverage --test-coverage-include=\"src/**\" --test-coverage-lines=80 --test-coverage-branches=80 \"test/**/*.test.js\""
   },
   "keywords": [
     "eol",
@@ -17,7 +21,10 @@
     "cli"
   ],
   "author": "Juraj Husar <http://github.com/jurosh/>",
-  "license": "Apache 2.0",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22.8.0"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/jurosh/nodejs-eol-converter-cli"
